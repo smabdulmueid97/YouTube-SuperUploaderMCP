@@ -1,0 +1,56 @@
+# ============================================================
+# Secrets and credentials — NEVER commit these.
+# ============================================================
+# Google OAuth client secret (Desktop client for this project)
+client_secret.json
+client_secret*.json
+credentials*.json
+*service-account*.json
+*secret*.json
+*.pem
+*.key
+# Google OAuth tokens — one per channel (mode 600, local only)
+tokens/
+# Environment files with keys
+.env
+.env.*
+!.env.example
+# Cloudflare / Supabase / API keys in any form
+*.muse-github-snapshot-sync.json
+.muse-github-snapshot-sync.json
+
+# ============================================================
+# Local-only runtime state (regenerated on each run)
+# ============================================================
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+logs/
+uploads/
+*.log
+
+# ============================================================
+# Test fixtures — binary videos generated locally with ffmpeg.
+# Not pushed (GitHub snapshot push is UTF-8 text only).
+# Regenerate with:
+#   ffmpeg -f lavfi -i testsrc=duration=5:size=720x1280:rate=30 \
+#     -pix_fmt yuv420p test/test-shorts.mp4
+# ============================================================
+test/
+
+# ============================================================
+# Build / editor / OS leftovers
+# ============================================================
+node_modules/
+dist/
+build/
+*.egg-info/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
