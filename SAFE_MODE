@@ -1,5 +1,0 @@
-SAFE TEST MODE is ON.
-Real uploads (videos.insert / thumbnails.set) are blocked while this file exists.
-Dry-runs still work.
-Delete this file ONLY after the user approves real uploads, and only after the
-website + privacy policy are deployed and the OAuth app publishing is addressed.
