@@ -2,14 +2,20 @@
 
 The uploader's source of truth stays local: `uploads/registry.json` and
 `logs/<slug>.jsonl`. This module mirrors those writes into Supabase
-(project "govtexam", tables `yt_channels`, `yt_uploads`, `yt_upload_logs`)
+(tables `yt_channels`, `yt_uploads`, `yt_upload_logs`, see supabase.md)
 so the state survives outside this machine and can be read from anywhere.
 
-How it talks to Supabase: through the Composio MCP client, which already
-holds a verified working Supabase connection (supabase_secund-triage).
-No Supabase key lives in this file or in the uploader — the Composio
-connection owns the credential. Each mirror call runs the client as a
-subprocess (a few seconds per call; acceptable for daily uploads).
+How it talks to Supabase: through the Composio MCP client, which holds
+a Supabase connection. No Supabase key lives in this file or in the
+uploader — the Composio connection owns the credential. Each mirror call
+runs the client as a subprocess (a few seconds per call; acceptable for
+daily uploads).
+
+Configure the project ref with the SUPABASE_PROJECT_REF environment
+variable, or with a local `supabase_config.json` next to this file
+(`{"project_ref": "..."}` — git-ignored, never committed). Without a
+project ref the mirror silently disables itself and the uploader runs
+local-only.
 
 Safety rules:
   - Every function here is best-effort and NEVER raises into the engine.
@@ -20,7 +26,7 @@ Safety rules:
   - Dry-runs mirror only the log event, never a registry row — same
     rule as the local files (a dry-run writes no registry entry).
 
-Tables (created 2026-11-27, see supabase.md):
+Tables (see supabase.md):
   - yt_upload_logs (channel_slug, event, detail jsonb, created_at)
   - yt_uploads (file_sha256, channel_slug, filename, title,
     youtube_video_id, status, privacy, publish_at, is_shorts,
@@ -28,13 +34,32 @@ Tables (created 2026-11-27, see supabase.md):
 """
 
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 COMPOSIO_CLIENT = Path.home() / "workspace" / "custom-connectors" / "custom.composio" / "bin" / "client.py"
-PROJECT_REF = "fiuvihmwkcxazfkqenpn"
+
+
+def _project_ref():
+    """Supabase project ref: env var first, then a local git-ignored
+    supabase_config.json ({"project_ref": "..."}). Empty string disables
+    the mirror (local-only mode)."""
+    ref = os.environ.get("SUPABASE_PROJECT_REF")
+    if ref:
+        return ref
+    cfg = HERE / "supabase_config.json"
+    if cfg.exists():
+        try:
+            return json.loads(cfg.read_text()).get("project_ref", "") or ""
+        except Exception:  # noqa: BLE001 - a bad local config disables the mirror
+            return ""
+    return ""
+
+
+PROJECT_REF = _project_ref()
 _SUBPROCESS_TIMEOUT = 30  # seconds per mirror call
 
 _disabled = False  # circuit breaker: set True after the first failed mirror
@@ -42,7 +67,7 @@ _disabled = False  # circuit breaker: set True after the first failed mirror
 
 def enabled():
     """True when mirroring is possible in this process."""
-    return not _disabled and COMPOSIO_CLIENT.exists()
+    return bool(PROJECT_REF) and not _disabled and COMPOSIO_CLIENT.exists()
 
 
 def _sql_literal(value):
@@ -68,7 +93,7 @@ def _run_tool(tool_slug, arguments):
     payload = {
         "tools": [{"tool_slug": tool_slug, "arguments": arguments}],
         "thought": "Mirror uploader state to Supabase.",
-        "memory": {"supabase": ["Project govtexam, ref fiuvihmwkcxazfkqenpn."]},
+        "memory": {"supabase": ["YouTube uploader mirror."]},
         "current_step": "MIRRORING_TO_SUPABASE",
         "sync_response_to_workbench": False,
     }

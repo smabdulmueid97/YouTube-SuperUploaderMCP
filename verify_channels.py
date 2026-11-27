@@ -1,9 +1,8 @@
 """Verify one YouTube OAuth refresh token per channel.
 
-Usage (after the user approves the Cloud-client route and the 9 OAuth
-flows have been run, one per channel):
+Usage (after the OAuth flows have been run, one per channel):
     python3 verify_channels.py
-    python3 verify_channels.py --channel nemonit
+    python3 verify_channels.py --channel my-channel
 
 Each token file lives at tokens/<slug>.json (mode 600, never in chat,
 docs, logs or memory) and holds the authorized-user credentials for

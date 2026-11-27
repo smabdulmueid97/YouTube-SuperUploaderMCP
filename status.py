@@ -1,6 +1,6 @@
-"""Dashboard / summary of upload status for all 9 channels.
+"""Dashboard / summary of upload status for all configured channels.
 
-Reads channels.json (verified channel IDs), uploads/registry.json
+Reads channels.json (channel IDs), uploads/registry.json
 (completed + scheduled uploads) and logs/<slug>.jsonl (per-channel
 event logs) and prints a status table. With --verify it also checks
 each OAuth token live (read-only channels.list).

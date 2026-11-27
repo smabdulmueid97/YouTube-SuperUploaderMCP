@@ -1,58 +1,59 @@
-# Deploy — Cloudflare Pages (LIVE 2026-11-27)
+# Deploy — Cloudflare Pages
 
-Deployed 2026-11-27 ~16:08 Asia/Dhaka via the native Cloudflare
-connector (account "Smabdulmueid97@gmail.com's Account"; Cloudflare
-user smabdulmueid97@gmail.com). The Cloudflare account ID is not
-recorded here — find it in the Cloudflare dashboard and export it as
-CLOUDFLARE_ACCOUNT_ID before re-running `deploy_pages.py`.
+The two files in this folder (`index.html` home page +
+`privacy.html` privacy policy) are the public URLs Google's OAuth
+Branding page requires before the app can be Published (see the README,
+Step 2). Any static host works; this guide uses Cloudflare Pages
+Direct Upload.
 
-- Project: `nevo-youtube-uploader`
-- Home: https://nevo-youtube-uploader.pages.dev/
-- Privacy: https://nevo-youtube-uploader.pages.dev/privacy.html
-  (Cloudflare serves it at /privacy too — /privacy.html 308-redirects
-  to /privacy; both work.)
-- Deployment id: 9c0561ad-b135-42e8-b49c-9ec2568d1def, environment production.
-- Files deployed: `index.html` + `privacy.html` (comments updated to the
-  real pages.dev URLs; no YOUR-DOMAIN-HERE placeholder left anywhere).
-- Verified live with curl: home 200 "Nevo YouTube Uploader", privacy 200
-  "Privacy Policy — Nevo YouTube Uploader".
+## Deploy
 
-## How it was deployed (Direct Upload flow)
+1. Create a Pages project in the Cloudflare dashboard (any name, e.g.
+   `my-youtube-uploader`), production branch `main`.
+2. Export your Cloudflare account ID (find it in the dashboard,
+   Account Home) and the project name:
+
+   ```bash
+   export CLOUDFLARE_ACCOUNT_ID="<account id>"
+   export CLOUDFLARE_PAGES_PROJECT="<project name>"
+   ```
+
+   The account ID is never stored in this repo.
+3. From the repo root, build the deploy arguments, then run them through
+   the Cloudflare connector's `execute` (or any runner that can call the
+   Cloudflare API with your credentials):
+
+   ```bash
+   python3 deploy_pages.py   # writes /tmp/pages-deploy-args.json
+   ```
+
+## How it works (Direct Upload flow)
 
 1. `POST /accounts/{id}/pages/projects` {name, production_branch: "main"}.
-2. `GET .../pages/projects/{project}/upload-token` -> short-lived JWT.
+2. `GET .../pages/projects/{project}/upload-token` → short-lived JWT
+   (~30 min).
 3. `POST /pages/assets/upload` with the JWT as Bearer + base64 files
-   (MD5 hex as asset keys). **Must run from this VM with curl, not
-   through the connector's `execute` sandbox: the sandbox replaces the
-   Authorization header with the session token, so the JWT-only assets
-   endpoints 403 there. The JWT is short-lived (~30 min) and scoped to
-   this project; fetch a fresh one per deploy, keep it in /tmp mode 600,
-   shred it after.**
+   (MD5 hex as asset keys). **Run the asset upload from a machine with
+   curl, not through a sandboxed `execute` that rewrites the
+   Authorization header — the JWT-only assets endpoints 403 there. The
+   JWT is short-lived and scoped to this project; fetch a fresh one per
+   deploy, keep it in /tmp mode 600, shred it after.**
 4. `POST .../pages/projects/{project}/deployments` with a FormData
-   manifest {"/index.html": md5, "/privacy.html": md5} via `execute`
-   (session auth works for this account-scoped call).
-- Helper: `deploy_pages.py` builds the execute arguments (hashes + base64).
-- No owned domain is needed: the pages.dev URLs satisfy Google's
-  home-page + privacy-policy fields for Publishing the OAuth app. The
-  user's own domain can be attached later in Cloudflare if wanted.
+   manifest {"/index.html": md5, "/privacy.html": md5}.
 
-## Next
+`deploy_pages.py` builds the execute arguments (hashes + base64) for
+steps 2–4.
 
-The OAuth app is **Published — In production** since 2026-11-27
-(see below). Branding now points at the custom domain, not pages.dev:
-home https://superuploadermcp.nemonit.com/ and privacy
-https://superuploadermcp.nemonit.com/privacy.html (app name also
-renamed to YouTube-SuperUploaderMCP by the owner during publishing).
-Refresh tokens no longer expire after 7 days. Google shows a
-"requires verification" banner; the app has NOT been submitted for
-verification — fine while only the owner uses it.
+## After deploy
 
-Custom domains on the Pages project (both live, verified 200):
-- https://superuploadermcp.nemonit.com/ (canonical, matches Branding)
-- https://youtube-superuploadermcp.nemonit.com/
-- https://nevo-youtube-uploader.pages.dev/ (fallback)
-The Pages project name stays `nevo-youtube-uploader` (not renamed).
-Attaching a custom domain did NOT create DNS by itself: add a proxied
-CNAME for each subdomain pointing at `nevo-youtube-uploader.pages.dev`
-or the domain will not resolve (curl 000 until the records exist;
-brief 522s while the cert settles are normal).
+- Home: `https://<project>.pages.dev/`
+- Privacy: `https://<project>.pages.dev/privacy.html`
+  (Cloudflare also serves it at `/privacy`; both work.)
+- No owned domain is needed: the `pages.dev` URLs satisfy Google's
+  home-page + privacy-policy fields. A custom domain can be attached
+  later in Cloudflare if wanted — note that attaching a domain does
+  NOT create DNS by itself: add a proxied CNAME for the subdomain
+  pointing at `<project>.pages.dev`, or the domain will not resolve.
+  Brief 522s while the certificate settles are normal.
+- Put the two URLs in the OAuth app's Branding page, add your domain to
+  Authorized domains, and Publish the app (README Step 2).

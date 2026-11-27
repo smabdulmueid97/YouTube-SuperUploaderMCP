@@ -19,7 +19,8 @@ Design notes (all verified 2026-11-27):
     ffprobe and records it in the log. Note: a Short over 1 minute
     with an active Content ID claim can be blocked globally.
   - Scheduled publishing: privacyStatus=private + publishAt (UTC).
-    The user gives the time in Asia/Dhaka; it is converted here.
+    The user gives the time in the configured timezone (UPLOADER_TIMEZONE,
+    default Asia/Dhaka); it is converted here.
   - Duplicate prevention: SHA-256 of the video file is recorded in
     uploads/registry.json. A file already uploaded (or scheduled)
     for that channel is refused unless --force is passed.
@@ -37,7 +38,7 @@ API restrictions (verified 2026-11-27 against Google's official docs):
     into their own bucket. The old "6 uploads/day" figure is wrong.)
     Source: developers.google.com/youtube/v3/docs/videos/insert
     ("Quota impact: 100 calls per day... 1 unit in the Video Uploads
-    quota bucket") and the Quota Calculator. 9 uploads/day fits.
+    quota bucket") and the Quota Calculator.
   - Privacy: the same page says an upload with no privacyStatus
     defaults to public, and videos from unverified API projects are
     NOT restricted to private anymore. This engine therefore ALWAYS
@@ -50,9 +51,9 @@ SAFE_MODE exists next to this script. Dry-runs always work. Delete
 that file ONLY after the user approves real uploads.
 
 Usage (via upload.py):
-    python3 upload.py --channel nemonit --video video.mp4 \\
+    python3 upload.py --channel my-channel --video video.mp4 \\
         --title "Title" --description "Desc" --tags a,b,c \\
-        --thumbnail thumb.jpg --publish-at "2026-11-28 18:00" --dry-run
+        --thumbnail thumb.jpg --publish-at "2026-12-01 18:00" --dry-run
 """
 import hashlib
 import json
@@ -69,15 +70,28 @@ CHANNELS_FILE = HERE / "channels.json"
 REGISTRY_FILE = HERE / "uploads" / "registry.json"
 LOGS_DIR = HERE / "logs"
 SCOPES = [
+    # FULL YouTube permission set (2026-11-27, user instruction: 100%, leave
+    # nothing behind). All 7 YouTube Data API v3 scopes from
+    # developers.google.com/youtube/v3/guides/authentication + both YouTube
+    # Analytics API scopes = 9 total. The two youtubepartner scopes are for
+    # CMS content partners; this account is not one, so those permissions
+    # simply do nothing usable, but they are included per the user's
+    # instruction so no future feature needs another re-authorization round.
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
+    "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
+    "https://www.googleapis.com/auth/youtubepartner",
+    "https://www.googleapis.com/auth/youtubepartner-channel-audit",
 ]
-TIMEZONE = ZoneInfo("Asia/Dhaka")
+TIMEZONE = ZoneInfo(os.environ.get("UPLOADER_TIMEZONE", "Asia/Dhaka"))
 CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB resumable chunks
 MAX_RETRIES = 5
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+THUMBNAIL_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
 API_URL = "https://www.googleapis.com/youtube/v3"
 SAFE_MODE_FILE = HERE / "SAFE_MODE"
 # videos.insert: 1 unit per call in its own Video Uploads bucket,
@@ -218,15 +232,15 @@ def is_short(probe, force_shorts=None):
 
 
 def parse_publish_at(text):
-    """'YYYY-MM-DD HH:MM' in Asia/Dhaka -> UTC RFC 3339 string."""
+    """'YYYY-MM-DD HH:MM' in the configured timezone -> UTC RFC 3339 string."""
     if not text:
         return None
     try:
         local = datetime.strptime(text, "%Y-%m-%d %H:%M").replace(tzinfo=TIMEZONE)
     except ValueError as exc:
-        raise UploadError(f"publish-at must be 'YYYY-MM-DD HH:MM' (Asia/Dhaka), got {text!r}: {exc}")
+        raise UploadError(f"publish-at must be 'YYYY-MM-DD HH:MM' ({TIMEZONE}), got {text!r}: {exc}")
     if local <= datetime.now(TIMEZONE):
-        raise UploadError(f"publish-at {text} is in the past (Asia/Dhaka time)")
+        raise UploadError(f"publish-at {text} is in the past ({TIMEZONE} time)")
     return local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -365,24 +379,85 @@ def _resumable_upload(creds, metadata, video_path, slug):
 
 
 def set_thumbnail(creds, video_id, thumb_path, slug):
-    """thumbnails.set - custom thumbnail for an uploaded video."""
+    """thumbnails.set - custom thumbnail for an uploaded video.
+
+    The image must go as the RAW request body (Content-Type image/jpeg)
+    to the /upload/ endpoint - the plain youtube/v3 endpoint rejects
+    any body with HTTP 400 mediaBodyRequired, and multipart is rejected
+    too (both seen in testing).
+    """
     thumb = Path(thumb_path)
     if not thumb.exists():
         raise UploadError(f"thumbnail not found: {thumb}")
     if thumb.stat().st_size > 2 * 1024 * 1024:
         raise UploadError("thumbnail must be under 2 MB")
-    with open(thumb, "rb") as f:
-        files = {"media": (thumb.name, f, "image/jpeg")}
-        resp = _request_with_retry(
-            "POST", f"{API_URL}/thumbnails/set",
-            params={"videoId": video_id},
-            headers={"Authorization": f"Bearer {creds.token}"},
-            files=files,
-        )
+    content_type = "image/png" if thumb.suffix.lower() == ".png" else "image/jpeg"
+    resp = _request_with_retry(
+        "POST", THUMBNAIL_UPLOAD_URL,
+        params={"videoId": video_id},
+        headers={"Authorization": f"Bearer {creds.token}", "Content-Type": content_type},
+        data=thumb.read_bytes(),
+    )
     if resp.status_code != 200:
         raise UploadError(f"thumbnails.set failed: HTTP {resp.status_code}: {resp.text[:500]}")
     log_event(slug, "thumbnail_set", video_id=video_id)
     return True
+
+
+def set_video_privacy(slug, video_id, privacy):
+    """Change a video's privacy (videos.update, part=status).
+
+    Fetches the video's current status first and sends it back with only
+    privacyStatus changed, so license/embeddable/madeForKids and any
+    other status fields are preserved. Verifies the new value with a
+    fresh read. Costs 50 quota units. Updates the registry record
+    (privacy_status + status) and mirrors it to Supabase.
+    """
+    if privacy not in ("public", "unlisted", "private"):
+        raise UploadError(f"unknown privacy value: {privacy}")
+    creds = load_credentials(slug)
+    verify_destination(slug, creds)
+    headers = {"Authorization": f"Bearer {creds.token}"}
+    current = _request_with_retry(
+        "GET", f"{API_URL}/videos",
+        params={"part": "status", "id": video_id}, headers=headers,
+    )
+    items = current.json().get("items", [])
+    if not items:
+        raise UploadError(f"video not found: {video_id}")
+    status = items[0]["status"]
+    if status.get("privacyStatus") == privacy:
+        return {"video_id": video_id, "privacy_status": privacy, "changed": False}
+    status["privacyStatus"] = privacy
+    resp = _request_with_retry(
+        "PUT", f"{API_URL}/videos",
+        params={"part": "status"},
+        headers={**headers, "Content-Type": "application/json"},
+        json={"id": video_id, "status": status},
+    )
+    if resp.status_code != 200:
+        raise UploadError(f"videos.update failed: HTTP {resp.status_code}: {resp.text[:500]}")
+    check = _request_with_retry(
+        "GET", f"{API_URL}/videos",
+        params={"part": "status", "id": video_id}, headers=headers,
+    )
+    new_status = check.json()["items"][0]["status"].get("privacyStatus")
+    if new_status != privacy:
+        raise UploadError(f"privacy change did not stick for {video_id}: still {new_status}")
+    log_event(slug, "privacy_changed", video_id=video_id, privacy_status=privacy)
+    registry = load_registry()
+    for rec in registry.get("uploads", []):
+        if rec.get("video_id") == video_id and rec.get("slug") == slug:
+            rec["privacy_status"] = privacy
+            rec["status"] = "uploaded" if privacy != "private" else rec.get("status", "uploaded")
+            save_registry(registry)
+            try:
+                import supabase_backend
+                supabase_backend.mirror_upload(rec)
+            except Exception:  # noqa: BLE001 - mirror must never break the change
+                pass
+            break
+    return {"video_id": video_id, "privacy_status": privacy, "changed": True}
 
 
 def upload_video(slug, video_path, title, description="", tags=None, thumbnail=None,
@@ -476,9 +551,11 @@ def upload_video(slug, video_path, title, description="", tags=None, thumbnail=N
         log_event(slug, "upload_failed", video_file=str(video_path), error=str(exc))
         raise
     log_event(slug, "upload_succeeded", video_id=video_id, title=title, is_short=short)
-    if thumbnail:
-        set_thumbnail(creds, video_id, thumbnail, slug)
 
+    # Save the registry record BEFORE the thumbnail step. A thumbnail
+    # failure used to leave no record, so a retry uploaded a 2nd copy
+    # (seen in testing). The record is updated once the
+    # thumbnail lands.
     registry = load_registry()
     new_record = {
         "slug": slug,
@@ -494,7 +571,7 @@ def upload_video(slug, video_path, title, description="", tags=None, thumbnail=N
         "publish_at_utc": publish_at_utc,
         "status": "scheduled" if publish_at_utc else "uploaded",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        "thumbnail_set": bool(thumbnail),
+        "thumbnail_set": False,  # updated to True below if the thumbnail lands
     }
     registry["uploads"].append(new_record)
     save_registry(registry)
@@ -503,5 +580,14 @@ def upload_video(slug, video_path, title, description="", tags=None, thumbnail=N
         supabase_backend.mirror_upload(new_record)
     except Exception:  # noqa: BLE001 - the Supabase mirror must never break an upload
         pass
+    if thumbnail:
+        set_thumbnail(creds, video_id, thumbnail, slug)
+        new_record["thumbnail_set"] = True
+        save_registry(registry)
+        try:
+            import supabase_backend
+            supabase_backend.mirror_upload(new_record)
+        except Exception:  # noqa: BLE001 - the Supabase mirror must never break an upload
+            pass
     return {"dry_run": False, "video_id": video_id,
             "video_url": f"https://www.youtube.com/watch?v={video_id}", "plan": plan}

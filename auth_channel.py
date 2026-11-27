@@ -1,16 +1,16 @@
 """Run one YouTube OAuth flow for a single channel and verify it.
 
-Usage (only after the user says to start the pilot / a channel):
-    python3 auth_channel.py --channel bangla-cartoons-folklore
+Usage (one flow per channel):
+    python3 auth_channel.py --channel my-channel
 
 The user picks the channel in Google's chooser in the browser window
 that opens. That choice decides which channel the token belongs to —
 nothing in this script selects the channel.
 
 Prerequisites (prepared, no secrets in this file):
-  - A Desktop OAuth client for project "Nevo YouTube Uploader", with
-    the YouTube Data API v3 + Analytics API enabled and the test user
-    added while the consent screen is in Testing.
+  - A Desktop OAuth client for your Google Cloud project, with
+    the YouTube Data API v3 + Analytics API enabled and yourself
+    added as a test user while the consent screen is in Testing.
   - The client secrets file placed at client_secret.json next to this
     script (mode 600). This script never prints its contents.
   - channels.json listing the expected channel for each slug.
@@ -34,10 +34,20 @@ HERE = Path(__file__).resolve().parent
 CLIENT_SECRETS = HERE / "client_secret.json"
 TOKENS_DIR = HERE / "tokens"
 SCOPES = [
+    # FULL YouTube permission set. All 7 YouTube Data API v3 scopes +
+    # both YouTube Analytics API scopes = 9 total, including the two
+    # youtubepartner scopes (CMS content partners only; unusable for a
+    # regular account, but included so no feature ever needs another
+    # re-authorization round).
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube.channel-memberships.creator",
+    "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
+    "https://www.googleapis.com/auth/youtubepartner",
+    "https://www.googleapis.com/auth/youtubepartner-channel-audit",
 ]
 
 

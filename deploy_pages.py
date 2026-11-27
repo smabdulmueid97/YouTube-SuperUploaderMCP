@@ -1,5 +1,9 @@
 """Build the Cloudflare `execute` arguments for deploying the two website
-files to the nevo-youtube-uploader Pages project (Direct Upload flow).
+files to a Cloudflare Pages project (Direct Upload flow).
+
+Set the project name and account ID before running:
+  export CLOUDFLARE_ACCOUNT_ID="<account id>"   # find it in the Cloudflare dashboard, Account Home
+  export CLOUDFLARE_PAGES_PROJECT="my-pages-project"
 
 Writes /tmp/pages-deploy-args.json with the JS code that:
   1. GETs the Pages upload token (JWT).
@@ -18,8 +22,8 @@ from pathlib import Path
 # deploying (find it in the Cloudflare dashboard, Account Home):
 #   export CLOUDFLARE_ACCOUNT_ID="<account id>"
 ACCOUNT_ID = os.environ["CLOUDFLARE_ACCOUNT_ID"]
-PROJECT = "nevo-youtube-uploader"
-WEBSITE = Path.home() / "workspace" / "youtube-uploader" / "website"
+PROJECT = os.environ.get("CLOUDFLARE_PAGES_PROJECT", "your-pages-project")
+WEBSITE = Path(__file__).resolve().parent / "website"
 
 files = {}
 for name in ("index.html", "privacy.html"):
@@ -31,7 +35,7 @@ for name in ("index.html", "privacy.html"):
 
 js = """
 async () => {
-  const project = "nevo-youtube-uploader";
+  const project = "__PROJECT__";
   const files = __FILES__;
   const hashes = Object.values(files).map(f => f.md5);
   const tokenRes = await cloudflare.request({method: "GET", path: `/accounts/${accountId}/pages/projects/${project}/upload-token`});
@@ -66,7 +70,7 @@ async () => {
   const d = depRes.result;
   return {deployment_id: d.id, url: d.url, env: d.environment, latest_stage: d.latest_stage && d.latest_stage.name, assets_via: missingRes.via, missing_were: missing, uploaded_count: toUpload.length};
 }
-""".replace("__FILES__", json.dumps(files))
+""".replace("__FILES__", json.dumps(files)).replace("__PROJECT__", PROJECT)
 
 args = {"account_id": ACCOUNT_ID, "code": js}
 Path("/tmp/pages-deploy-args.json").write_text(json.dumps(args))

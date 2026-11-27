@@ -1,8 +1,8 @@
 """Command line for the reusable YouTube upload engine.
 
 Examples (all dry-run first - nothing is published):
-    python3 upload.py --channel nemonit --video test.mp4 --title "Test" --dry-run
-    python3 upload.py --channel nemonit --video short.mp4 --title "T" --tags a,b \\
+    python3 upload.py --channel my-channel --video my-video.mp4 --title "My title" --dry-run
+    python3 upload.py --channel my-channel --video short.mp4 --title "My short" --tags a,b \\
         --thumbnail thumb.jpg --publish-at "2026-11-28 18:00" --dry-run
 
 Remove --dry-run ONLY for the one approved test video. Never run a
@@ -24,7 +24,7 @@ def main():
     parser.add_argument("--tags", default="", help="comma-separated tags (max 30)")
     parser.add_argument("--thumbnail", default=None, help="path to thumbnail image (<2 MB)")
     parser.add_argument("--publish-at", default=None,
-                        help="scheduled publish time 'YYYY-MM-DD HH:MM' in Asia/Dhaka")
+                        help="scheduled publish time 'YYYY-MM-DD HH:MM' in $UPLOADER_TIMEZONE (default Asia/Dhaka)")
     parser.add_argument("--privacy", default="private", choices=["private", "unlisted", "public"],
                         help="privacy for immediate publish (scheduled videos are private until publish time)")
     parser.add_argument("--shorts", action="store_true", help="mark as a Short (auto-detected otherwise)")
